@@ -1,4 +1,4 @@
-// index.js (CommonJS - Railway ready)
+// index.js (CommonJS pour Railway avec FFmpeg)
 const express = require('express');
 const dotenv = require('dotenv');
 const fs = require('fs');
@@ -17,7 +17,7 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-// 🔧 Chemin FFmpeg : Railway doit avoir ffmpeg installé en global
+// Utilise le binaire global sur Railway
 const ffmpegPath = 'ffmpeg';
 
 app.post('/api/process-video', async (req, res) => {
@@ -27,7 +27,6 @@ app.post('/api/process-video', async (req, res) => {
   }
 
   try {
-    // 📥 Récupère les vidéos liées à l'événement
     const { data: videos, error: videosError } = await supabase
       .from('videos')
       .select('storage_path')
@@ -37,7 +36,6 @@ app.post('/api/process-video', async (req, res) => {
     if (videosError) throw videosError;
     if (!videos || videos.length === 0) throw new Error('Aucune vidéo trouvée');
 
-    // 📂 Création du dossier temporaire
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), `event_${eventId}_`));
     const listFile = path.join(tmpDir, 'list.txt');
     const fileList = [];
@@ -48,24 +46,31 @@ app.post('/api/process-video', async (req, res) => {
         .download(v.storage_path);
       if (fileErr) throw fileErr;
 
-      const fileName = path.basename(v.storage_path);
-      const filePath = path.join(tmpDir, fileName);
+      const filePath = path.join(tmpDir, path.basename(v.storage_path));
       const buffer = Buffer.from(await fileData.arrayBuffer());
       await fs.promises.writeFile(filePath, buffer);
-      fileList.push(`file '${filePath.replace(/'/g, "'\\''")}'`);
+
+      // Chemin de fichier sans transformation
+      fileList.push(`file '${filePath}'`);
     }
 
-    // 📝 Écrit le fichier list.txt pour FFmpeg
+    // Écriture du fichier list.txt
     await fs.promises.writeFile(listFile, fileList.join('\n'));
+
+    // Log pour debug
+    console.log('📝 Contenu de list.txt :\n' + fileList.join('\n'));
+
     const outputPath = path.join(tmpDir, 'final.mp4');
 
-    // 🧪 Fusion des vidéos avec FFmpeg
+    // Lancement FFmpeg
     await new Promise((resolve, reject) => {
       const ff = spawn(ffmpegPath, [
+        '-loglevel', 'debug',
         '-y', '-f', 'concat', '-safe', '0',
         '-i', listFile,
         '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
-        '-c:a', 'aac', outputPath
+        '-c:a', 'aac',
+        outputPath
       ]);
 
       ff.stderr.on('data', (d) => console.log(`🎥 FFmpeg: ${d}`));
@@ -76,7 +81,7 @@ app.post('/api/process-video', async (req, res) => {
       });
     });
 
-    // 🚀 Upload final.mp4 dans Supabase Storage
+    // Upload de la vidéo générée
     const buffer = await fs.promises.readFile(outputPath);
     const storagePath = `final_videos/${eventId}.mp4`;
 
@@ -88,13 +93,11 @@ app.post('/api/process-video', async (req, res) => {
       });
     if (uploadError) throw uploadError;
 
-    // 🔗 Récupère l'URL publique
     const { data: urlData } = supabase.storage
       .from('videos')
       .getPublicUrl(storagePath);
     const finalUrl = urlData.publicUrl;
 
-    // 🛠️ Mise à jour de l'événement avec l'URL finale
     const { error: updateError } = await supabase
       .from('events')
       .update({ final_video_url: finalUrl, status: 'done' })
