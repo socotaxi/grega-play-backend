@@ -1,4 +1,3 @@
-// index.js (CommonJS pour Railway avec FFmpeg)
 const express = require('express');
 const dotenv = require('dotenv');
 const fs = require('fs');
@@ -17,7 +16,6 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-// Utilise le binaire global sur Railway
 const ffmpegPath = 'ffmpeg';
 
 app.post('/api/process-video', async (req, res) => {
@@ -50,19 +48,18 @@ app.post('/api/process-video', async (req, res) => {
       const buffer = Buffer.from(await fileData.arrayBuffer());
       await fs.promises.writeFile(filePath, buffer);
 
-      // Chemin de fichier sans transformation
       fileList.push(`file '${filePath}'`);
     }
 
-    // Écriture du fichier list.txt
     await fs.promises.writeFile(listFile, fileList.join('\n'));
-
-    // Log pour debug
     console.log('📝 Contenu de list.txt :\n' + fileList.join('\n'));
+    console.log('📄 Fichier list.txt utilisé :', listFile);
+    console.log('📁 Répertoire temporaire :', tmpDir);
 
     const outputPath = path.join(tmpDir, 'final.mp4');
 
-    // Lancement FFmpeg
+    console.log('🎬 Lancement de FFmpeg...');
+
     await new Promise((resolve, reject) => {
       const ff = spawn(ffmpegPath, [
         '-loglevel', 'debug',
@@ -74,14 +71,24 @@ app.post('/api/process-video', async (req, res) => {
       ]);
 
       ff.stderr.on('data', (d) => console.log(`🎥 FFmpeg: ${d}`));
-      ff.on('error', reject);
+      ff.on('error', (err) => {
+        console.error('❌ Erreur lors du lancement de FFmpeg :', err);
+        reject(err);
+      });
+
       ff.on('close', (code) => {
+        console.log(`⚙️ FFmpeg terminé avec le code : ${code}`);
         if (code === 0) resolve();
         else reject(new Error(`FFmpeg exited with code ${code}`));
       });
     });
 
-    // Upload de la vidéo générée
+    if (!fs.existsSync(outputPath)) {
+      console.error('❌ Fichier final.mp4 introuvable :', outputPath);
+      throw new Error('FFmpeg a échoué : fichier final.mp4 manquant');
+    }
+
+    console.log('📤 Lecture de la vidéo générée pour upload...');
     const buffer = await fs.promises.readFile(outputPath);
     const storagePath = `final_videos/${eventId}.mp4`;
 
@@ -104,6 +111,7 @@ app.post('/api/process-video', async (req, res) => {
       .eq('id', eventId);
     if (updateError) throw updateError;
 
+    console.log('✅ Vidéo uploadée avec succès :', finalUrl);
     res.status(200).json({
       message: '🎬 Vidéo générée avec succès',
       final_video_url: finalUrl
