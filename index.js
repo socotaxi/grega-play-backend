@@ -18,7 +18,7 @@ const supabase = createClient(
 );
 
 // Utilise le binaire global sur Railway
-const ffmpegPath = '/usr/bin/ffmpeg';
+const ffmpegPath = 'ffmpeg'; // ne pas mettre de chemin absolu
 
 app.post('/api/process-video', async (req, res) => {
   const eventId = req.query.eventId;
