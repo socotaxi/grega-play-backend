@@ -2,7 +2,7 @@
 const fetch = require('node-fetch');
 
 // Remplace par l'URL de ton API Railway
-const API_URL = 'https://grega-play-backend-production-bb92.up.railway.app/api/process-video'; // ✅
+const API_URL = 'grega-play-backend-production.up.railway.appapi/process-video'; // ✅
 
 // Remplace par un eventId valide
 const TEST_EVENT_ID = 'e27aceb0-a5e8-40cf-b81b-5929d8ba263d';
