@@ -1,3 +1,4 @@
+// index.js (CommonJS pour Railway avec logs détaillés)
 const express = require('express');
 const dotenv = require('dotenv');
 const fs = require('fs');
@@ -16,6 +17,7 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
+// Utilise le binaire global sur Railway
 const ffmpegPath = 'ffmpeg';
 
 app.post('/api/process-video', async (req, res) => {
@@ -25,6 +27,8 @@ app.post('/api/process-video', async (req, res) => {
   }
 
   try {
+    console.log(`🎯 Traitement de l'événement : ${eventId}`);
+
     const { data: videos, error: videosError } = await supabase
       .from('videos')
       .select('storage_path')
@@ -34,35 +38,42 @@ app.post('/api/process-video', async (req, res) => {
     if (videosError) throw videosError;
     if (!videos || videos.length === 0) throw new Error('Aucune vidéo trouvée');
 
+    console.log(`📦 ${videos.length} vidéos à traiter.`);
+
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), `event_${eventId}_`));
+    console.log('📁 Dossier temporaire créé :', tmpDir);
+
     const listFile = path.join(tmpDir, 'list.txt');
     const fileList = [];
 
     for (const v of videos) {
+      console.log('📥 Téléchargement de:', v.storage_path);
       const { data: fileData, error: fileErr } = await supabase.storage
         .from('videos')
         .download(v.storage_path);
-      if (fileErr) throw fileErr;
+      if (fileErr) {
+        console.error('❌ Erreur téléchargement vidéo:', fileErr.message);
+        continue;
+      }
 
       const filePath = path.join(tmpDir, path.basename(v.storage_path));
       const buffer = Buffer.from(await fileData.arrayBuffer());
       await fs.promises.writeFile(filePath, buffer);
+      console.log('✅ Vidéo écrite localement :', filePath);
 
       fileList.push(`file '${filePath}'`);
     }
 
     await fs.promises.writeFile(listFile, fileList.join('\n'));
-    console.log('📝 Contenu de list.txt :\n' + fileList.join('\n'));
-    console.log('📄 Fichier list.txt utilisé :', listFile);
-    console.log('📁 Répertoire temporaire :', tmpDir);
+
+    const listContent = await fs.promises.readFile(listFile, 'utf-8');
+    console.log('📝 Contenu de list.txt :\n' + listContent);
 
     const outputPath = path.join(tmpDir, 'final.mp4');
-
     console.log('🎬 Lancement de FFmpeg...');
 
     await new Promise((resolve, reject) => {
       const ff = spawn(ffmpegPath, [
-        '-loglevel', 'debug',
         '-y', '-f', 'concat', '-safe', '0',
         '-i', listFile,
         '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
@@ -70,12 +81,12 @@ app.post('/api/process-video', async (req, res) => {
         outputPath
       ]);
 
+      ff.stdout.on('data', (d) => console.log(`📤 FFmpeg stdout: ${d}`));
       ff.stderr.on('data', (d) => console.log(`🎥 FFmpeg: ${d}`));
       ff.on('error', (err) => {
-        console.error('❌ Erreur lors du lancement de FFmpeg :', err);
+        console.error('🔥 FFmpeg erreur :', err);
         reject(err);
       });
-
       ff.on('close', (code) => {
         console.log(`⚙️ FFmpeg terminé avec le code : ${code}`);
         if (code === 0) resolve();
@@ -83,12 +94,6 @@ app.post('/api/process-video', async (req, res) => {
       });
     });
 
-    if (!fs.existsSync(outputPath)) {
-      console.error('❌ Fichier final.mp4 introuvable :', outputPath);
-      throw new Error('FFmpeg a échoué : fichier final.mp4 manquant');
-    }
-
-    console.log('📤 Lecture de la vidéo générée pour upload...');
     const buffer = await fs.promises.readFile(outputPath);
     const storagePath = `final_videos/${eventId}.mp4`;
 
@@ -111,7 +116,6 @@ app.post('/api/process-video', async (req, res) => {
       .eq('id', eventId);
     if (updateError) throw updateError;
 
-    console.log('✅ Vidéo uploadée avec succès :', finalUrl);
     res.status(200).json({
       message: '🎬 Vidéo générée avec succès',
       final_video_url: finalUrl
